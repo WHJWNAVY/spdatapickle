@@ -18,8 +18,6 @@
 #include "spxml/spxmlhandle.hpp"
 #include "spxml/spxmlnode.hpp"
 
-#include "spjson/spjsonport.hpp"
-
 SP_XmlPickle :: SP_XmlPickle( SP_DPMetaInfo_t * metaInfo )
 	: SP_DataPickle( metaInfo )
 {
@@ -31,27 +29,6 @@ SP_XmlPickle :: ~SP_XmlPickle()
 
 int SP_XmlPickle :: pickle( void * structure, int size, int type, SP_XmlStringBuffer * buffer )
 {
-	SP_DPMetaStruct_t * metaStruct = SP_DPMetaUtils::find( mMetaInfo, type );
-
-	if( NULL == metaStruct ) return -1;
-
-	int ret = 0;
-
-	buffer->append( '<' );
-	buffer->append( metaStruct->mName );
-	buffer->append( ">\n" );
-
-	ret = realPickle( structure, size, type, buffer );
-
-	buffer->append( "</" );
-	buffer->append( metaStruct->mName );
-	buffer->append( ">\n" );
-
-	return ret;
-}
-
-int SP_XmlPickle :: realPickle( void * structure, int size, int type, SP_XmlStringBuffer * buffer )
-{
 	if( NULL == structure ) return -1;
 
 	char * base = (char*)structure;
@@ -61,6 +38,10 @@ int SP_XmlPickle :: realPickle( void * structure, int size, int type, SP_XmlStri
 	if( NULL == metaStruct ) return -1;
 
 	if( metaStruct->mSize != size ) return -1;
+
+	buffer->append( '<' );
+	buffer->append( metaStruct->mName );
+	buffer->append( ">\n" );
 
 	for( int i = 0; i < metaStruct->mFieldCount; i++ ) {
 		SP_DPMetaField_t * field = metaStruct->mFieldList + i;
@@ -73,7 +54,7 @@ int SP_XmlPickle :: realPickle( void * structure, int size, int type, SP_XmlStri
 		buffer->append( field->mName );
 		buffer->append( ">" );
 
-		if( field->mType > eTypeSPDPBuiltin ) {
+		if( field->mType > eTypeSPDPUserDefine ) {
 			buffer->append( "\n" );
 			if( field->mIsPtr ) {
 				int referCount = SP_DPMetaUtils::getReferCount( structure, metaStruct, field );
@@ -81,18 +62,10 @@ int SP_XmlPickle :: realPickle( void * structure, int size, int type, SP_XmlStri
 				char * referBase = *(char**)(base + field->mOffset);
 
 				for( int j = 0; j < referCount; j++ ) {
-					buffer->append( '<' );
-					buffer->append( referStruct->mName );
-					buffer->append( ">\n" );
-
-					realPickle( referBase + ( j * referStruct->mSize ), field->mItemSize, field->mType, buffer );
-
-					buffer->append( "</" );
-					buffer->append( referStruct->mName );
-					buffer->append( ">\n" );
+					pickle( referBase + ( j * referStruct->mSize ), field->mItemSize, field->mType, buffer );
 				}
 			} else {
-				realPickle( base + field->mOffset, field->mItemSize, field->mType, buffer );
+				pickle( base + field->mOffset, field->mItemSize, field->mType, buffer );
 			}
 		} else {
 			pickleBaseType( structure, metaStruct, field, buffer );
@@ -102,6 +75,10 @@ int SP_XmlPickle :: realPickle( void * structure, int size, int type, SP_XmlStri
 		buffer->append( field->mName );
 		buffer->append( ">\n" );
 	}
+
+	buffer->append( "</" );
+	buffer->append( metaStruct->mName );
+	buffer->append( ">\n" );
 
 	return 0;
 }
@@ -172,10 +149,10 @@ int SP_XmlPickle :: pickleBasePtr( void * ptr, int type, SP_XmlStringBuffer * bu
 			snprintf( tmp, sizeof( tmp ), "%u", *(unsigned int*)ptr );
 			break;
 		case eTypeSPDPInt64:
-			snprintf( tmp, sizeof( tmp ), "%lld", *(int64_t*)ptr );
+			snprintf( tmp, sizeof( tmp ), "%lld", *(long long*)ptr );
 			break;
 		case eTypeSPDPUint64:
-			snprintf( tmp, sizeof( tmp ), "%llu", *(uint64_t*)ptr );
+			snprintf( tmp, sizeof( tmp ), "%llu", *(unsigned long long*)ptr );
 			break;
 		case eTypeSPDPFloat:
 			snprintf( tmp, sizeof( tmp ), "%f", *(float*)ptr );
@@ -241,24 +218,18 @@ int SP_XmlPickle :: unpickle( const char * xml, int len, int type, void * struct
 		return -1;
 	}
 
+	if( NULL == parser.getDocument()->getRootElement() ) {
+		return -1;
+	}
+
 	SP_XmlElementNode * root = parser.getDocument()->getRootElement();
-
-	if( NULL == root ) {
-		return -1;
-	}
-
-	SP_DPMetaStruct_t * metaStruct = SP_DPMetaUtils::find( mMetaInfo, type );
-
-	if( 0 != strcmp( root->getName(), metaStruct->mName ) ) {
-		return -1;
-	}
 
 	return unpickle( root, type, structure, size );
 }
 
 int SP_XmlPickle :: unpickle( SP_XmlElementNode * root, int type, void * structure, int size )
 {
-	int ret = 0, i = 0;
+	int ret = 0;
 
 	char * base = (char*)structure;
 
@@ -268,15 +239,19 @@ int SP_XmlPickle :: unpickle( SP_XmlElementNode * root, int type, void * structu
 
 	if( metaStruct->mSize != size ) return -1;
 
+	if( 0 != strcmp( root->getName(), metaStruct->mName ) ) {
+		return -1;
+	}
+
 	SP_XmlHandle rootHandle( root );
 
 	// unpickle the non-ptr base type, maybe include referCount
-	for( i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
+	for( int i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
 		SP_DPMetaField_t * field = metaStruct->mFieldList + i;
 
 		SP_XmlHandle fieldHandle = rootHandle.getChild( field->mName );
 
-		if( field->mType < eTypeSPDPBuiltin && 0 == field->mIsPtr ) {
+		if( field->mType < eTypeSPDPUserDefine && 0 == field->mIsPtr ) {
 			if( NULL == fieldHandle.toNode() ) {
 				if( field->mIsRequired ) ret = -1;
 				continue;
@@ -286,11 +261,11 @@ int SP_XmlPickle :: unpickle( SP_XmlElementNode * root, int type, void * structu
 		}
 	}
 
-	for( i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
+	for( int i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
 		SP_DPMetaField_t * field = metaStruct->mFieldList + i;
 
 		// these fields had been unpickled, skip
-		if( field->mType < eTypeSPDPBuiltin && 0 == field->mIsPtr ) continue;
+		if( field->mType < eTypeSPDPUserDefine && 0 == field->mIsPtr ) continue;
 
 		SP_XmlHandle fieldHandle = rootHandle.getChild( field->mName );
 
@@ -303,7 +278,7 @@ int SP_XmlPickle :: unpickle( SP_XmlElementNode * root, int type, void * structu
 			continue;
 		}
 
-		if( field->mType > eTypeSPDPBuiltin ) {
+		if( field->mType > eTypeSPDPUserDefine ) {
 			if( field->mIsPtr ) {
 				int referCount = SP_DPMetaUtils::getReferCount( structure, metaStruct, field );
 				SP_DPMetaStruct_t * referStruct = SP_DPMetaUtils::find( mMetaInfo, field->mType );
@@ -317,7 +292,7 @@ int SP_XmlPickle :: unpickle( SP_XmlElementNode * root, int type, void * structu
 							referBase + ( j * referStruct->mSize ), field->mItemSize );
 				}
 			} else {
-				ret = unpickle( fieldHandle.toElement(), field->mType,
+				ret = unpickle( fieldHandle.getChild(0).toElement(), field->mType,
 						base + field->mOffset, field->mItemSize );
 			}
 		} else {
@@ -391,9 +366,6 @@ int SP_XmlPickle :: unpickleBasePtr( SP_XmlElementNode * node, int type, void * 
 
 	SP_XmlHandle nodeHandle( node );
 	SP_XmlHandle cdataHandle = nodeHandle.getChild(0);
-
-	if( cdataHandle.toCData() == NULL ) return -1;
-
 	const char * text = cdataHandle.toCData()->getText();
 
 	switch( type ) {
@@ -413,20 +385,16 @@ int SP_XmlPickle :: unpickleBasePtr( SP_XmlElementNode * node, int type, void * 
 			*(unsigned int*)ptr = strtoul( text, NULL, 10 );
 			break;
 		case eTypeSPDPInt64:
-			sscanf( text, "%lld", (int64_t*)ptr );
-			//*(int64_t*)ptr = _strtoll( text, NULL, 10 );
+			*(long long*)ptr = strtoll( text, NULL, 10 );
 			break;
 		case eTypeSPDPUint64:
-			sscanf( text, "%llu", (uint64_t*)ptr );
-			//*(uint64_t*)ptr = strtoull( text, NULL, 10 );
+			*(unsigned long long*)ptr = strtoull( text, NULL, 10 );
 			break;
 		case eTypeSPDPFloat:
-			sscanf( text, "%f", (float*)ptr );
-			//*(float*)ptr = strtof( text, NULL );
+			*(float*)ptr = strtof( text, NULL );
 			break;
 		case eTypeSPDPDouble:
-			sscanf( text, "%lf", (double*)ptr );
-			//*(float*)ptr = strtod( text, NULL );
+			*(float*)ptr = strtod( text, NULL );
 			break;
 		default:
 			ret = -1;

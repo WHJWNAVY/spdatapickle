@@ -27,8 +27,6 @@ enum {
 	eTypeSPDPFloat,
 	eTypeSPDPDouble,
 
-	eTypeSPDPBuiltin = 256,
-
 	eTypeSPDPUserDefine = 512
 };
 

@@ -1,0 +1,12 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libspjson
+Description: libspjson
+Version: 1.0.0
+Requires:
+Libs.private:
+Libs: -L${libdir} -lspjson
+Cflags: -I${includedir}

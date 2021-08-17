@@ -6,11 +6,14 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <assert.h>
 
-#include "dp_xyzaddrbookstruct.hpp"
+#include "dp_xyzaddrbook.hpp"
 
-#include "spdatapickle/spdpmetautils.hpp"
+#include "spdpmetautils.hpp"
+#include "spxmlpickle.hpp"
+#include "spjsonpickle.hpp"
+#include "sppbpickle.hpp"
+#include "spdpalloc.hpp"
 
 #include "spxml/spxmlutils.hpp"
 #include "spjson/spjsonutils.hpp"
@@ -35,7 +38,7 @@ void printBuffer( SP_XmlStringBuffer * buffer )
 	}
 }
 
-void testEmail( XYZAddrbookPickle * pickle )
+void testEmail( SP_DataPickle * pickle )
 {
 	XYZEmail_t email;
 	memset( &email, 0, sizeof( email ) );
@@ -45,14 +48,15 @@ void testEmail( XYZAddrbookPickle * pickle )
 
 	SP_XmlStringBuffer buffer;
 
-	pickle->pickle( &email, &buffer );
+	pickle->pickle( &email, sizeof( email ), eTypeXYZEmail, &buffer );
 
 	printBuffer( &buffer );
 
-	pickle->freeFields( email );
+	SP_DPAlloc alloc( gXYZAddrbookMetaInfo );
+	alloc.free( &email, sizeof( email ), eTypeXYZEmail );
 }
 
-void testPhoneNumber( XYZAddrbookPickle * pickle )
+void testPhoneNumber( SP_DataPickle * pickle )
 {
 	XYZPhoneNumber_t phoneNumber;
 	memset( &phoneNumber, 0, sizeof( phoneNumber ) );
@@ -62,7 +66,7 @@ void testPhoneNumber( XYZAddrbookPickle * pickle )
 	phoneNumber.mContent = strdup( "12345678" );
 
 	SP_XmlStringBuffer buffer;
-	pickle->pickle( &phoneNumber, &buffer );
+	pickle->pickle( &phoneNumber, sizeof( phoneNumber ), eTypeXYZPhoneNumber, &buffer );
 
 	printBuffer( &buffer );
 
@@ -104,7 +108,6 @@ void initContact( XYZContact_t * contact )
 		contact->mPhoneList = list;
 	}
 
-	contact->mLuckNumber.mList = (int*)calloc( sizeof( int ), 4 );
 	contact->mLuckNumber.mCount = 4;
 	{
 		contact->mLuckNumber.mList[0] = 16;
@@ -114,7 +117,7 @@ void initContact( XYZContact_t * contact )
 	}
 }
 
-void testContact( XYZAddrbookPickle * pickle )
+void testContact( SP_DataPickle * pickle )
 {
 	XYZContact_t contact;
 
@@ -122,14 +125,15 @@ void testContact( XYZAddrbookPickle * pickle )
 
 	SP_XmlStringBuffer buffer;
 
-	pickle->pickle( &contact, &buffer );
+	pickle->pickle( &contact, sizeof( contact ), eTypeXYZContact, &buffer );
 
 	printBuffer( &buffer );
 
-	pickle->freeFields( contact );
+	SP_DPAlloc alloc( gXYZAddrbookMetaInfo );
+	alloc.free( &contact, sizeof( contact ), eTypeXYZContact );
 }
 
-void testUnpickle( XYZAddrbookPickle * pickle )
+void testUnpickle( SP_DataPickle * pickle )
 {
 	XYZContact_t org;
 
@@ -137,14 +141,15 @@ void testUnpickle( XYZAddrbookPickle * pickle )
 
 	SP_XmlStringBuffer buffer;
 
-	pickle->pickle( &org, &buffer );
+	pickle->pickle( &org, sizeof( org ), eTypeXYZContact, &buffer );
 
 	printBuffer( &buffer );
 
 	XYZContact_t contact;
 	memset( &contact, 0, sizeof( contact ) );
 
-	int ret = pickle->unpickle( &buffer, &contact );
+	int ret = pickle->unpickle( buffer.getBuffer(), buffer.getSize(),
+			eTypeXYZContact, &contact, sizeof( contact ) );
 
 	printf( "Unpickle %d\n\n", ret );
 
@@ -153,30 +158,28 @@ void testUnpickle( XYZAddrbookPickle * pickle )
 		return;
 	}
 
-	int i = 0;
-
 	printf( "name %s\n", contact.mName );
 	printf( "image.size %d\n", contact.mImage.mSize );
 	printf( "image.buffer: " );
-	for( i = 0; i < contact.mImage.mSize; i++ ) {
+	for( int i = 0; i < contact.mImage.mSize; i++ ) {
 		printf( "%d ", contact.mImage.mBuffer[i] );
 	}
 	printf( "\n" );
 
 	printf( "email.count %d\n", contact.mEmailCount );
-	for( i = 0; i < contact.mEmailCount; i++ ) {
+	for( int i = 0; i < contact.mEmailCount; i++ ) {
 		XYZEmail_t * email = contact.mEmailList + i;
 		printf( "email#%d: %s, %s\n", i, email->mAddress, email->mType );
 	}
 
 	printf( "phone.count %d\n", contact.mPhoneCount );
-	for( i = 0; i < contact.mPhoneCount; i++ ) {
+	for( int i = 0; i < contact.mPhoneCount; i++ ) {
 		XYZPhoneNumber_t * phone = contact.mPhoneList + i;
 		printf( "phone#%d: %s, %s, %d\n", i, phone->mContent, phone->mType, phone->mPrimary );
 	}
 
 	printf( "luck.number.count %d\n", contact.mLuckNumber.mCount );
-	for( i = 0; i < contact.mLuckNumber.mCount; i++ ) {
+	for( int i = 0; i < contact.mLuckNumber.mCount; i++ ) {
 		printf( "number#%d: %d\n", i, contact.mLuckNumber.mList[i] );
 	}
 
@@ -185,211 +188,26 @@ void testUnpickle( XYZAddrbookPickle * pickle )
 	alloc.free( &org, sizeof( org ), eTypeXYZContact );
 }
 
-//===================================================================
-
-class XYZEmail {
-public:
-	XYZEmail();
-	~XYZEmail();
-
-	XYZEmail( const XYZEmail & other );
-
-	XYZEmail( XYZEmail_t * impl );
-
-	void copyTo( XYZEmail_t * impl ) const;
-
-	XYZEmail & operator=( const XYZEmail & other );
-
-	XYZEmail_t * getImpl() const;
-
-	char * getType() const;
-
-	void setAddress( const char * mAddress );
-	const char * getAddress() const;
-
-	void setNickname( const char * mNickname );
-	const char * getNickname() const;
-
-private:
-	XYZEmail_t * mImpl;
-	int mOwner;
-};
-
-XYZEmail :: XYZEmail()
-{
-	mImpl = (XYZEmail_t*)calloc( sizeof( XYZEmail_t ), 1 );
-	mOwner = 1;
-}
-
-XYZEmail :: ~XYZEmail()
-{
-	if( mOwner ) {
-		XYZAddrbookPickle::freeFields( *mImpl );
-		free( mImpl );
-	}
-	mImpl = NULL;
-}
-
-XYZEmail :: XYZEmail( XYZEmail_t * impl )
-{
-	mImpl = impl;
-	mOwner = 0;
-}
-
-XYZEmail :: XYZEmail( const XYZEmail & other )
-{
-	mImpl = NULL;
-	operator=( other );
-}
-
-XYZEmail & XYZEmail :: operator=( const XYZEmail & other )
-{
-	if( NULL != mImpl )
-	{
-		XYZAddrbookPickle::freeFields( *mImpl );
-		free( mImpl );
-		mImpl = NULL;
-	}
-
-	mImpl = (XYZEmail_t*)calloc( sizeof( XYZEmail_t ), 1 );
-	mOwner = 1;
-
-	XYZAddrbookPickle::deepCopy( mImpl, other.mImpl );
-
-	return *this;
-}
-
-void XYZEmail :: copyTo( XYZEmail_t * impl ) const
-{
-	XYZAddrbookPickle::deepCopy( mImpl, impl );
-}
-
-XYZEmail_t * XYZEmail :: getImpl() const
-{
-	return mImpl;
-}
-
-char * XYZEmail :: getType() const
-{
-	return mImpl->mType;
-}
-
-void XYZEmail :: setAddress( const char * mAddress )
-{
-	if( mImpl->mAddress ) free( mImpl->mAddress );
-	mImpl->mAddress = NULL;
-	if( mAddress ) mImpl->mAddress = strdup( mAddress );
-}
-
-const char * XYZEmail :: getAddress() const
-{
-	return mImpl->mAddress;
-}
-
-void XYZEmail :: setNickname( const char * mNickname )
-{
-	if( mImpl->mNickname ) free( mImpl->mNickname );
-	mImpl->mNickname = NULL;
-	if( mNickname ) mImpl->mNickname = strdup( mNickname );
-}
-
-const char * XYZEmail :: getNickname() const
-{
-	return mImpl->mNickname;
-}
-
-//===================================================================
-
-void testDeepCopy()
-{
-	XYZAddrbookPickle pickle( SP_DataPickle::eXml );
-
-	SP_XmlStringBuffer orgBuffer;
-	XYZContact_t org;
-	{
-		initContact( &org );
-		pickle.pickle( &org, &orgBuffer );
-	}
-
-	SP_XmlStringBuffer contactBuffer;
-	XYZContact_t contact;
-	{
-		pickle.deepCopy( &org, &contact );
-		pickle.pickle( &contact, &contactBuffer );
-	}
-
-	assert( 0 == memcmp( orgBuffer.getBuffer(), contactBuffer.getBuffer(), orgBuffer.getSize() ) );
-
-	pickle.freeFields( contact );
-	pickle.freeFields( org );
-}
-
-void testVector()
-{
-	XYZAddrbookPickle pickle( SP_DataPickle::eXml );
-
-	XYZContact_t org;
-	initContact( &org );
-
-	SP_DPVector<XYZEmail_t, XYZEmail> emailList( & org.mEmailList, & org.mEmailCount, 0 );
-
-	printf( "count %d\n", emailList.getCount() );
-	for( int i = 0; i < emailList.getCount(); i++ ) {
-		printf( "#%d: %s\n", i, emailList.getItem(i)->getAddress() );
-	}
-
-	XYZEmail email;
-	email.setAddress( "school <school@foo.bar>" );
-
-	emailList.append( &email );
-
-	printf( "count %d\n", emailList.getCount() );
-	for( int i = 0; i < emailList.getCount(); i++ ) {
-		printf( "#%d: %s\n", i, emailList.getItem(i)->getAddress() );
-	}
-
-	pickle.freeFields( org );
-
-	{
-		printf( "test array\n" );
-
-		XYZEmail_t tmpList[2];
-		SP_DPVector<XYZEmail_t, XYZEmail> tmpVector( (XYZEmail_t**)&tmpList, NULL, 2 );
-
-		for( int i = 0; i < 3; i++ ) {
-			int ret = tmpVector.append( &email );
-			if( 0 != ret ) {
-				printf( "#%d append %d\n", i, ret );
-			}
-		}
-
-		printf( "count %d\n", tmpVector.getCount() );
-	}
-}
-
 int main( int argc, char * argv[] )
 {
 	if( argc < 2 ) {
 		printf( "Usage: %s <type>\n\n", argv[0] );
-		printf( "\ttype 0 - xml, 1 - xmlrpc, 2 - json, 3 - protobuf\n\n" );
+		printf( "\ttype 0 - xml, 1 - json, 2 - protobuf\n\n" );
 		return -1;
 	}
 
 	int type = atoi( argv[1] );
 
-	//SP_DPMetaUtils::dump( gXYZAddrbookMetaInfo );
+	SP_DPMetaUtils::dump( gXYZAddrbookMetaInfo );
 
-	XYZAddrbookPickle xmlPickle( SP_DataPickle::eXml );
-	XYZAddrbookPickle xmlRpcPickle( SP_DataPickle::eXmlRpc );
-	XYZAddrbookPickle jsonPickle( SP_DataPickle::eJson );
-	XYZAddrbookPickle pbPickle( SP_DataPickle::eProtoBuf );
+	SP_XmlPickle  xmlPickle( gXYZAddrbookMetaInfo );
+	SP_JsonPickle jsonPickle( gXYZAddrbookMetaInfo );
+	SP_ProtoBufPickle pbPickle( gXYZAddrbookMetaInfo );
 
-	XYZAddrbookPickle * pickle = &xmlPickle;
-	if( 1 == type ) pickle = &xmlRpcPickle;
-	if( 2 == type ) pickle = &jsonPickle;
-	if( 3 == type ) pickle = &pbPickle;
+	SP_DataPickle * pickle = &xmlPickle;
+	if( 1 == type ) pickle = &jsonPickle;
+	if( 2 == type ) pickle = &pbPickle;
 
-#if 0
 	testEmail( pickle );
 
 	testPhoneNumber( pickle );
@@ -397,11 +215,6 @@ int main( int argc, char * argv[] )
 	testContact( pickle );
 
 	testUnpickle( pickle );
-
-	testDeepCopy();
-#endif
-
-	testVector();
 
 	return 0;
 }

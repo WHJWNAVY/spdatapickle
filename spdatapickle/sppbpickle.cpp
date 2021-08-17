@@ -57,7 +57,7 @@ int SP_ProtoBufPickle :: pickle( void * structure, int size, int type, SP_ProtoB
 		if( field->mIsPtr && ( field->mArraySize <= 0 )
 				&& ( NULL == *(void**) ( base + field->mOffset ) ) ) continue;
 
-		if( field->mType > eTypeSPDPBuiltin ) {
+		if( field->mType > eTypeSPDPUserDefine ) {
 			SP_ProtoBufEncoder subEncoder;
 
 			if( field->mIsPtr ) {
@@ -182,7 +182,7 @@ int SP_ProtoBufPickle :: pickleBasePtr( void * ptr, int type,
 			encoder->addFloat( fieldId, *(float*)ptr );
 			break;
 		case eTypeSPDPDouble:
-			encoder->addDouble( fieldId, *(double*)ptr );
+			encoder->addFloat( fieldId, *(double*)ptr );
 			break;
 		default:
 			ret = -1;
@@ -194,15 +194,14 @@ int SP_ProtoBufPickle :: pickleBasePtr( void * ptr, int type,
 
 int SP_ProtoBufPickle :: unpickle( const char * data, int len, int type, void * structure, int size )
 {
-	SP_ProtoBufDecoder decoder;
-	decoder.copyFrom( data, len );
+	SP_ProtoBufDecoder decoder( data, len );
 
 	return unpickle( &decoder, type, structure, size );
 }
 
 int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void * structure, int size )
 {
-	int ret = 0, i = 0;
+	int ret = 0;
 
 	char * base = (char*)structure;
 
@@ -211,13 +210,13 @@ int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void 
 	if( NULL == metaStruct || metaStruct->mSize != size ) return -1;
 
 	// unpickle the non-ptr base type, maybe include referCount
-	for( i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
+	for( int i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
 		SP_DPMetaField_t * field = metaStruct->mFieldList + i;
 
 		// skip referred field
 		if( field->mIsReferred ) continue;
 
-		if( field->mType < eTypeSPDPBuiltin && 0 == field->mIsPtr ) {
+		if( field->mType < eTypeSPDPUserDefine && 0 == field->mIsPtr ) {
 			SP_ProtoBufDecoder::KeyValPair_t pair;
 			bool findRet = decoder->find( field->mId, &pair );
 
@@ -230,14 +229,14 @@ int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void 
 		}
 	}
 
-	for( i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
+	for( int i = 0; 0 == ret && i < metaStruct->mFieldCount; i++ ) {
 		SP_DPMetaField_t * field = metaStruct->mFieldList + i;
 
 		// skip referred field
 		if( field->mIsReferred ) continue;
 
 		// these fields had been unpickled, skip
-		if( field->mType < eTypeSPDPBuiltin && 0 == field->mIsPtr ) continue;
+		if( field->mType < eTypeSPDPUserDefine && 0 == field->mIsPtr ) continue;
 
 		SP_ProtoBufDecoder::KeyValPair_t pair;
 		bool findRet = decoder->find( field->mId, &pair );
@@ -251,7 +250,7 @@ int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void 
 			continue;
 		}
 
-		if( field->mType > eTypeSPDPBuiltin ) {
+		if( field->mType > eTypeSPDPUserDefine ) {
 			if( field->mIsPtr ) {
 				int referCount = pair.mRepeatedCount;
 				SP_DPMetaUtils::setReferCount( structure, metaStruct, field, referCount );
@@ -264,8 +263,7 @@ int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void 
 					findRet = decoder->find( field->mId, &pair, j );
 
 					if( findRet ) {
-						SP_ProtoBufDecoder subDecoder;
-						subDecoder.attach( pair.mBinary.mBuffer, pair.mBinary.mLen );
+						SP_ProtoBufDecoder subDecoder( pair.mBinary.mBuffer, pair.mBinary.mLen );
 						ret = unpickle( &subDecoder, field->mType,
 								referBase + ( j * referStruct->mSize ), field->mItemSize );
 					} else {
@@ -273,8 +271,7 @@ int SP_ProtoBufPickle :: unpickle( SP_ProtoBufDecoder * decoder, int type, void 
 					}
 				}
 			} else {
-				SP_ProtoBufDecoder subDecoder;
-				subDecoder.attach( pair.mBinary.mBuffer, pair.mBinary.mLen );
+				SP_ProtoBufDecoder subDecoder( pair.mBinary.mBuffer, pair.mBinary.mLen );
 				ret = unpickle( &subDecoder, field->mType, base + field->mOffset, field->mItemSize );
 			}
 		} else {
@@ -380,26 +377,26 @@ int SP_ProtoBufPickle :: unpickleBasePtr( void * node, int type, void * ptr )
 
 	switch( type ) {
 		case eTypeSPDPChar:
-			*(char*)ptr = (char)pair->mVarint.s;
+			*(char*)ptr = pair->mVarint.s;
 			break;
 		case eTypeSPDPInt16:
-			*(int16_t*)ptr = (int16_t)pair->mVarint.s;
+			*(int16_t*)ptr = pair->mVarint.s;
 			break;
 		case eTypeSPDPUint16:
-			*(uint16_t*)ptr = (uint16_t)pair->mVarint.u;
+			*(uint16_t*)ptr = pair->mVarint.u;
 			break;
 		case eTypeSPDPInt32:
 			if( SP_ProtoBufDecoder::eWire32Bit == pair->mWireType ) {
 				*(int32_t*)ptr = pair->m32Bit.s;
 			} else {
-				*(int32_t*)ptr = (int32_t)pair->mVarint.s;
+				*(int32_t*)ptr = pair->mVarint.s;
 			}
 			break;
 		case eTypeSPDPUint32:
 			if( SP_ProtoBufDecoder::eWire32Bit == pair->mWireType ) {
 				*(uint32_t*)ptr = pair->m32Bit.u;
 			} else {
-				*(uint32_t*)ptr = (uint32_t)pair->mVarint.u;
+				*(uint32_t*)ptr = pair->mVarint.u;
 			}
 			break;
 		case eTypeSPDPInt64:
